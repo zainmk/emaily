@@ -198,8 +198,6 @@ def send_email(subject, html_body):
     app_password = os.environ['GMAIL_APP_PASSWORD']
     to_email = os.environ['TO_EMAIL'] or email # DEFAULT TO EMAIL SELF IF NOT PROVIDED
 
-    print(email, app_password, to_email)
-
     msg = MIMEText(html_body, "html")
     msg["Subject"] = subject
     msg["From"] = email
