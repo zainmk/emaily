@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import sys
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -51,7 +54,7 @@ def fetch_calendar_events():
     try:
         creds = Credentials(
             token=None,
-            refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
+            refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"], # TIME BASED TOKEN
             token_uri="https://oauth2.googleapis.com/token",
             client_id=os.environ["GOOGLE_CLIENT_ID"],
             client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
@@ -188,21 +191,23 @@ def compose_briefing(events, weather):
 
 
 def send_email(subject, html_body):
-    """Send an HTML email via Gmail SMTP."""
-    gmail_address = os.environ["GMAIL_ADDRESS"]
-    gmail_password = os.environ["GMAIL_APP_PASSWORD"]
-    recipient = os.environ["RECIPIENT_EMAIL"]
+        
+    email = os.environ['GMAIL_ADDRESS']
+    app_password = os.environ['GMAIL_APP_PASSWORD']
+    to_email = os.environ['TO_EMAIL'] or email # DEFAULT TO EMAIL SELF IF NOT PROVIDED
 
-    msg = MIMEMultipart("alternative")
+    msg = MIMEText(html_body, "html")
     msg["Subject"] = subject
-    msg["From"] = gmail_address
-    msg["To"] = recipient
-    msg.attach(MIMEText(html_body, "html"))
+    msg["From"] = email
+    msg["To"] = to_email
 
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
-        server.login(gmail_address, gmail_password)
-        server.sendmail(gmail_address, recipient, msg.as_string())
+        server.login(email, app_password)
+        server.send_message(msg)
+
+    print("✅ HTML email sent!")
+
 
 
 def main():
@@ -214,7 +219,7 @@ def main():
 
     print("Composing briefing with Claude...")
     briefing_html = compose_briefing(events, weather)
-
+    
     today = datetime.now(MST).strftime("%A, %B %d, %Y")
     subject = f"Daily Briefing - {today}"
 

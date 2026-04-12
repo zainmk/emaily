@@ -1,4 +1,4 @@
-name: Daily Briefing Email
+name: Daily Briefing
 
 on:
   schedule:
@@ -25,8 +25,11 @@ jobs:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          
         run: python daily_briefing.py
