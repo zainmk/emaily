@@ -54,7 +54,7 @@ WMO_CODES = {
 
 
 def fetch_calendar_events():
-    """Fetch today's events from Google Calendar using OAuth refresh token."""
+    """Fetch today's and tomorrow's events from Google Calendar using OAuth refresh token."""
     try:
         creds = Credentials(
             token=None,
@@ -68,14 +68,14 @@ def fetch_calendar_events():
 
         now = datetime.now(MST)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day = start_of_day + timedelta(days=1)
+        end_of_range = start_of_day + timedelta(days=2)
 
         events_result = (
             service.events()
             .list(
                 calendarId="primary",
                 timeMin=start_of_day.isoformat(),
-                timeMax=end_of_day.isoformat(),
+                timeMax=end_of_range.isoformat(),
                 singleEvents=True,
                 orderBy="startTime",
             )
@@ -136,28 +136,42 @@ def fetch_weather():
         return None
 
 
-def fetch_apod():
-    """Fetch NASA's Astronomy Picture of the Day."""
-    try:
-        resp = requests.get(
-            "http://api.nasa.gov/planetary/apod",
-            params={"api_key": os.environ["NASA_API_KEY"]},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+import requests
+import os
+import sys
+import time
 
-        return {
-            "title": data.get("title", ""),
-            "explanation": data.get("explanation", ""),
-            "url": data.get("url", ""),
-            "hdurl": data.get("hdurl", ""),
-            "media_type": data.get("media_type", "image"),
-            "copyright": data.get("copyright", ""),
-        }
-    except Exception as e:
-        print(f"Error fetching APOD: {e}", file=sys.stderr)
-        return None
+def fetch_apod():
+    """Fetch NASA's Astronomy Picture of the Day with retries."""
+    url = "http://api.nasa.gov/planetary/apod"
+    params = {"api_key": os.environ["NASA_API_KEY"]}
+
+    max_retries = 10 
+    timeout = 10
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()
+
+            return {
+                "title": data.get("title", ""),
+                "explanation": data.get("explanation", ""),
+                "url": data.get("url", ""),
+                "hdurl": data.get("hdurl", ""),
+                "media_type": data.get("media_type", "image"),
+                "copyright": data.get("copyright", ""),
+            }
+
+        except Exception as e:
+            print(f"Attempt {attempt} failed: {e}", file=sys.stderr)
+
+            if attempt < max_retries:
+                time.sleep(1)  # small delay before retry
+            else:
+                print("Error fetching APOD after 3 attempts.", file=sys.stderr)
+                return None
 
 
 
@@ -173,8 +187,29 @@ def _format_time(iso_str):
         return iso_str
 
 
-def _build_widget(label, content_html):
+def _format_day_header(iso_str):
+    """Return 'Today' or 'Tomorrow' based on the event's date."""
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        today = datetime.now(MST).date()
+        event_date = dt.date()
+        delta = (event_date - today).days
+        if delta == 0:
+            return "Today"
+        elif delta == 1:
+            return "Tomorrow"
+        else:
+            return event_date.strftime("%A, %b %d")
+    except (ValueError, AttributeError):
+        return "Upcoming"
+
+
+def _build_widget(label, content_html, link=None):
     """Build a single Apple glass-style widget card."""
+    inner = f"""<p style="margin:0 0 16px; font-size:11px; font-weight:600; color:#86868b; text-transform:uppercase; letter-spacing:1px;">{label}</p>
+              {content_html}"""
+    if link:
+        inner = f'<a href="{link}" target="_blank" style="display:block; text-decoration:none; color:inherit;">{inner}</a>'
     return f"""
         <tr><td style="padding-bottom:12px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="
@@ -185,8 +220,7 @@ def _build_widget(label, content_html):
             box-shadow:0 1px 4px rgba(0,0,0,0.04);
           ">
             <tr><td style="padding:24px 28px;">
-              <p style="margin:0 0 16px; font-size:11px; font-weight:600; color:#86868b; text-transform:uppercase; letter-spacing:1px;">{label}</p>
-              {content_html}
+              {inner}
             </td></tr>
           </table>
         </td></tr>"""
@@ -196,7 +230,7 @@ def _build_weather_widget(weather, quip=""):
     """Build weather widget HTML from API data."""
     if weather is None:
         content = '<p style="margin:0; font-size:15px; color:#86868b;">Weather data unavailable.</p>'
-        return _build_widget("\u2601\ufe0f Weather", content)
+        return _build_widget("\u2601\ufe0f Weather", content, link="https://weather.gc.ca/en/location/index.html?coords=51.046,-114.057")
 
     sunrise = _format_time(weather["sunrise"])
     sunset = _format_time(weather["sunset"])
@@ -232,36 +266,59 @@ def _build_weather_widget(weather, quip=""):
               </table>
               {quip_html}"""
 
-    return _build_widget("\u2601\ufe0f Weather", content)
+    return _build_widget("\u2601\ufe0f Weather", content, link="https://weather.gc.ca/en/location/index.html?coords=51.046,-114.057")
 
 
 def _build_calendar_widget(events):
-    """Build calendar widget HTML from events data."""
+    """Build calendar widget HTML from events data, grouped by day."""
     if events is None:
         content = '<p style="margin:0; font-size:15px; color:#86868b;">Calendar data unavailable.</p>'
-        return _build_widget("📅 Schedule", content)
+        return _build_widget("📅 Schedule", content, link="https://calendar.google.com/calendar/u/0/r")
 
     if not events:
-        content = '<p style="margin:0; font-size:15px; color:#86868b;">Nothing scheduled \u2014 enjoy the open day!</p>'
-        return _build_widget("📅 Schedule", content)
+        content = '<p style="margin:0; font-size:15px; color:#86868b;">Nothing scheduled \u2014 enjoy the open days!</p>'
+        return _build_widget("📅 Schedule", content, link="https://calendar.google.com/calendar/u/0/r")
+
+    from collections import OrderedDict
+    days = OrderedDict()
+    for e in events:
+        date_key = e["start"][:10]
+        days.setdefault(date_key, []).append(e)
 
     items_html = []
-    for i, e in enumerate(events):
-        start, end = e["start"], e["end"]
-        if "T" in start:
-            time_str = f"{_format_time(start)} \u2013 {_format_time(end)}"
-        else:
-            time_str = "All Day"
+    is_first_day = True
 
-        location_html = ""
-        if e.get("location"):
-            location_html = f'<p style="margin:4px 0 0; font-size:13px; color:#86868b;">📍 {html.escape(e["location"])}</p>'
+    for date_key, day_events in days.items():
+        day_label = _format_day_header(date_key)
 
-        separator = ""
-        if i > 0:
-            separator = '<tr><td style="padding:10px 0;"><div style="border-top:1px solid #f2f2f7; height:0;"></div></td></tr>'
+        if not is_first_day:
+            items_html.append(
+                '<tr><td style="padding:14px 0 6px;"><div style="border-top:2px solid #e5e5ea; height:0;"></div></td></tr>'
+            )
 
-        items_html.append(f"""
+        items_html.append(f'''
+              <tr><td style="padding:{'0' if is_first_day else '8px'} 0 10px;">
+                <p style="margin:0; font-size:13px; font-weight:700; color:#1d1d1f; text-transform:uppercase; letter-spacing:0.5px;">{html.escape(day_label)}</p>
+              </td></tr>''')
+
+        is_first_day = False
+
+        for j, e in enumerate(day_events):
+            start, end = e["start"], e["end"]
+            if "T" in start:
+                time_str = f"{_format_time(start)} \u2013 {_format_time(end)}"
+            else:
+                time_str = "All Day"
+
+            location_html = ""
+            if e.get("location"):
+                location_html = f'<p style="margin:4px 0 0; font-size:13px; color:#86868b;">📍 {html.escape(e["location"])}</p>'
+
+            separator = ""
+            if j > 0:
+                separator = '<tr><td style="padding:10px 0;"><div style="border-top:1px solid #f2f2f7; height:0;"></div></td></tr>'
+
+            items_html.append(f"""
               {separator}
               <tr><td>
                 <p style="margin:0; font-size:13px; color:#86868b; font-weight:500;">{time_str}</p>
@@ -270,7 +327,7 @@ def _build_calendar_widget(events):
               </td></tr>""")
 
     content = f'<table width="100%" cellpadding="0" cellspacing="0" border="0">{"".join(items_html)}</table>'
-    return _build_widget("📅 Schedule", content)
+    return _build_widget("📅 Schedule", content, link="https://calendar.google.com/calendar/u/0/r")
 
 
 def _build_apod_widget(apod):
@@ -299,7 +356,8 @@ def _build_apod_widget(apod):
               <p style="margin:8px 0 0; font-size:14px; color:#6e6e73; line-height:1.5;">{explanation}</p>
               {copyright_html}"""
 
-    return _build_widget("\U0001f52d Space", content)
+    apod_link = apod.get("hdurl") or apod.get("url") or None
+    return _build_widget("\U0001f52d Space", content, link=apod_link)
 
 
 def _build_digest_widget(digest_text):
@@ -356,12 +414,19 @@ def _generate_dynamic_content(events, weather):
             f"Precip {weather['precipitation_probability']}%"
         )
     if events:
-        event_summaries = [e["summary"] for e in events]
-        context_parts.append(
-            f"Calendar: {len(events)} events \u2014 {', '.join(event_summaries)}"
-        )
+        from collections import OrderedDict
+        days = OrderedDict()
+        for e in events:
+            date_key = e["start"][:10]
+            days.setdefault(date_key, []).append(e)
+        calendar_lines = []
+        for date_key, day_events in days.items():
+            day_label = _format_day_header(date_key)
+            summaries = ", ".join(ev["summary"] for ev in day_events)
+            calendar_lines.append(f"{day_label}: {len(day_events)} event(s) \u2014 {summaries}")
+        context_parts.append("Calendar:\n" + "\n".join(calendar_lines))
     elif events is not None:
-        context_parts.append("Calendar: Free day, no events!")
+        context_parts.append("Calendar: All clear for today and tomorrow!")
 
     context = "\n".join(context_parts) if context_parts else "No data available."
 
