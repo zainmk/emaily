@@ -1,6 +1,7 @@
 # FOR LOCAL TESTING VIA .ENV
-from dotenv import load_dotenv
-load_dotenv()
+
+# from dotenv import load_dotenv
+# load_dotenv()
 
 import os
 import sys
@@ -159,42 +160,6 @@ def fetch_apod():
         return None
 
 
-def fetch_neo():
-    """Fetch today's Near Earth Objects from NASA NeoWs."""
-    try:
-        today_str = datetime.now(MST).strftime("%Y-%m-%d")
-        resp = requests.get(
-            "https://api.nasa.gov/neo/rest/v1/feed",
-            params={
-                "start_date": today_str,
-                "end_date": today_str,
-                "api_key": os.environ["NASA_API_KEY"],
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        objects = []
-        for neo in data.get("near_earth_objects", {}).get(today_str, []):
-            close = neo["close_approach_data"][0] if neo.get("close_approach_data") else {}
-            diameter = neo.get("estimated_diameter", {}).get("meters", {})
-            objects.append({
-                "name": neo.get("name", "Unknown"),
-                "is_hazardous": neo.get("is_potentially_hazardous_asteroid", False),
-                "diameter_min_m": diameter.get("estimated_diameter_min", 0),
-                "diameter_max_m": diameter.get("estimated_diameter_max", 0),
-                "velocity_kmh": float(close.get("relative_velocity", {}).get("kilometers_per_hour", 0)),
-                "miss_distance_km": float(close.get("miss_distance", {}).get("kilometers", 0)),
-            })
-
-        # Sort by closest approach
-        objects.sort(key=lambda o: o["miss_distance_km"])
-        return objects
-    except Exception as e:
-        print(f"Error fetching NEO data: {e}", file=sys.stderr)
-        return None
-
 
 def _format_time(iso_str):
     """Format an ISO datetime string to readable time (e.g., '6:30 AM')."""
@@ -337,68 +302,6 @@ def _build_apod_widget(apod):
     return _build_widget("\U0001f52d Space", content)
 
 
-def _build_neo_widget(neo_list):
-    """Build Near Earth Objects widget from NASA NeoWs data."""
-    if neo_list is None:
-        content = '<p style="margin:0; font-size:15px; color:#86868b;">NEO data unavailable.</p>'
-        return _build_widget("\u2604\ufe0f Near Earth Objects", content)
-
-    if not neo_list:
-        content = '<p style="margin:0; font-size:15px; color:#86868b;">No asteroids approaching today.</p>'
-        return _build_widget("\u2604\ufe0f Near Earth Objects", content)
-
-    total = len(neo_list)
-    hazardous = sum(1 for o in neo_list if o["is_hazardous"])
-
-    # Summary line
-    hazard_html = ""
-    if hazardous:
-        hazard_html = f' &middot; <span style="color:#ff3b30; font-weight:600;">{hazardous} hazardous</span>'
-    summary = f'<p style="margin:0 0 16px; font-size:15px; color:#1d1d1f;">{total} asteroid{"s" if total != 1 else ""} passing Earth today{hazard_html}</p>'
-
-    # Show top 3 closest
-    items_html = []
-    for i, obj in enumerate(neo_list[:3]):
-        name = html.escape(obj["name"])
-        dist_km = obj["miss_distance_km"]
-        vel = obj["velocity_kmh"]
-        diam_min = obj["diameter_min_m"]
-        diam_max = obj["diameter_max_m"]
-
-        # Format distance as lunar distances for intuition (1 LD ~ 384,400 km)
-        lunar_dist = dist_km / 384400
-        dist_display = f"{lunar_dist:.1f} LD"
-
-        hazard_badge = ""
-        if obj["is_hazardous"]:
-            hazard_badge = '<span style="display:inline-block; background:#ff3b30; color:#fff; font-size:9px; font-weight:700; padding:2px 6px; border-radius:4px; text-transform:uppercase; letter-spacing:0.5px; margin-left:8px;">Hazardous</span>'
-
-        separator = ""
-        if i > 0:
-            separator = '<tr><td style="padding:10px 0;"><div style="border-top:1px solid #f2f2f7; height:0;"></div></td></tr>'
-
-        items_html.append(f"""
-              {separator}
-              <tr><td>
-                <p style="margin:0; font-size:15px; font-weight:600; color:#1d1d1f;">{name}{hazard_badge}</p>
-                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">
-                  <tr>
-                    <td style="font-size:11px; color:#86868b; text-transform:uppercase; letter-spacing:0.5px; width:33%;">Distance</td>
-                    <td style="font-size:11px; color:#86868b; text-transform:uppercase; letter-spacing:0.5px; width:33%;">Speed</td>
-                    <td style="font-size:11px; color:#86868b; text-transform:uppercase; letter-spacing:0.5px; width:34%;">Diameter</td>
-                  </tr>
-                  <tr>
-                    <td style="font-size:15px; font-weight:600; color:#1d1d1f; padding-top:4px;">{dist_display}</td>
-                    <td style="font-size:15px; font-weight:600; color:#1d1d1f; padding-top:4px;">{vel:,.0f} km/h</td>
-                    <td style="font-size:15px; font-weight:600; color:#1d1d1f; padding-top:4px;">{diam_min:.0f}\u2013{diam_max:.0f} m</td>
-                  </tr>
-                </table>
-              </td></tr>""")
-
-    content = summary + f'<table width="100%" cellpadding="0" cellspacing="0" border="0">{"".join(items_html)}</table>'
-    return _build_widget("\u2604\ufe0f Near Earth Objects", content)
-
-
 def _build_digest_widget(digest_text):
     """Build daily digest widget from Claude-generated content."""
     content = f'<p style="margin:0; font-size:15px; color:#1d1d1f; line-height:1.6;">{html.escape(digest_text)}</p>'
@@ -501,7 +404,7 @@ def _generate_dynamic_content(events, weather):
         }
 
 
-def compose_briefing(events, weather, apod, neo):
+def compose_briefing(events, weather, apod):
     """Compose the full briefing email with Apple glass-style widgets."""
     today = datetime.now(MST).strftime("%A, %B %d, %Y")
 
@@ -511,10 +414,9 @@ def compose_briefing(events, weather, apod, neo):
     weather_widget = _build_weather_widget(weather, dynamic.get("weather_quip", ""))
     calendar_widget = _build_calendar_widget(events)
     apod_widget = _build_apod_widget(apod)
-    neo_widget = _build_neo_widget(neo)
     digest_widget = _build_digest_widget(dynamic.get("digest", ""))
 
-    widgets_html = weather_widget + calendar_widget + apod_widget + neo_widget + digest_widget
+    widgets_html = weather_widget + calendar_widget + apod_widget + digest_widget
 
     return _build_email(
         today,
@@ -554,11 +456,8 @@ def main():
     print("Fetching NASA APOD...")
     apod = fetch_apod()
 
-    print("Fetching Near Earth Objects...")
-    neo = fetch_neo()
-
     print("Composing briefing with Claude...")
-    briefing_html = compose_briefing(events, weather, apod, neo)
+    briefing_html = compose_briefing(events, weather, apod)
     
     today = datetime.now(MST).strftime("%A, %B %d, %Y")
     subject = f"Daily Briefing - {today}"
