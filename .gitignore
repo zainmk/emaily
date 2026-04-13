@@ -2,3 +2,4 @@ get_refresh_token.py
 google_app_setting.json
 .venv
 .env
+.claude
