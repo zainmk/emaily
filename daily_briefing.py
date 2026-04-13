@@ -1,10 +1,11 @@
 # FOR LOCAL TESTING VIA .ENV
-# from dotenv import load_dotenv
-# load_dotenv()
+from dotenv import load_dotenv
+load_dotenv()
 
 import os
-
 import sys
+import json
+import html
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -134,62 +135,239 @@ def fetch_weather():
         return None
 
 
-def compose_briefing(events, weather):
-    """Use Claude to compose a formatted daily briefing email."""
-    client = anthropic.Anthropic()
+def _format_time(iso_str):
+    """Format an ISO datetime string to readable time (e.g., '6:30 AM')."""
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        hour = dt.hour % 12 or 12
+        minute = dt.strftime("%M")
+        ampm = "AM" if dt.hour < 12 else "PM"
+        return f"{hour}:{minute} {ampm}"
+    except (ValueError, AttributeError):
+        return iso_str
 
-    today = datetime.now(MST).strftime("%A, %B %d, %Y")
 
-    if events is None:
-        events_text = "Calendar data was unavailable due to an error."
-    elif len(events) == 0:
-        events_text = "No events scheduled for today."
-    else:
-        lines = []
-        for e in events:
-            line = f"- {e['start']} to {e['end']}: {e['summary']}"
-            if e.get("location"):
-                line += f" (Location: {e['location']})"
-            lines.append(line)
-        events_text = "\n".join(lines)
+def _build_widget(label, content_html):
+    """Build a single Apple glass-style widget card."""
+    return f"""
+        <tr><td style="padding-bottom:12px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="
+            background-color:#ffffff;
+            border:1px solid #e5e5ea;
+            border-radius:16px;
+            overflow:hidden;
+            box-shadow:0 1px 4px rgba(0,0,0,0.04);
+          ">
+            <tr><td style="padding:24px 28px;">
+              <p style="margin:0 0 16px; font-size:11px; font-weight:600; color:#86868b; text-transform:uppercase; letter-spacing:1px;">{label}</p>
+              {content_html}
+            </td></tr>
+          </table>
+        </td></tr>"""
 
+
+def _build_weather_widget(weather, quip=""):
+    """Build weather widget HTML from API data."""
     if weather is None:
-        weather_text = "Weather data was unavailable due to an error."
-    else:
-        weather_text = (
-            f"Conditions: {weather['weather_description']}\n"
-            f"High: {weather['high_c']}\u00b0C / Low: {weather['low_c']}\u00b0C\n"
-            f"Precipitation probability: {weather['precipitation_probability']}%\n"
-            f"Wind: {weather['wind_speed_kmh']} km/h\n"
-            f"Sunrise: {weather['sunrise']} / Sunset: {weather['sunset']}"
+        content = '<p style="margin:0; font-size:15px; color:#86868b;">Weather data unavailable.</p>'
+        return _build_widget("\u2601\ufe0f Weather", content)
+
+    sunrise = _format_time(weather["sunrise"])
+    sunset = _format_time(weather["sunset"])
+
+    quip_html = ""
+    if quip:
+        quip_html = f'<p style="margin:16px 0 0; font-size:14px; color:#6e6e73; font-style:italic;">\u201c{html.escape(quip)}\u201d</p>'
+
+    content = f"""
+              <p style="margin:0; font-size:48px; font-weight:700; color:#1d1d1f; letter-spacing:-2px; line-height:1;">{weather['high_c']:.0f}\u00b0</p>
+              <p style="margin:4px 0 0; font-size:17px; color:#1d1d1f; font-weight:500;">{html.escape(weather['weather_description'])}</p>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;">
+                <tr>
+                  <td style="padding:8px 0; font-size:11px; color:#86868b; text-transform:uppercase; letter-spacing:0.5px; width:33%;">Low</td>
+                  <td style="padding:8px 0; font-size:11px; color:#86868b; text-transform:uppercase; letter-spacing:0.5px; width:33%;">Precip</td>
+                  <td style="padding:8px 0; font-size:11px; color:#86868b; text-transform:uppercase; letter-spacing:0.5px; width:34%;">Wind</td>
+                </tr>
+                <tr>
+                  <td style="font-size:17px; font-weight:600; color:#1d1d1f;">{weather['low_c']:.0f}\u00b0C</td>
+                  <td style="font-size:17px; font-weight:600; color:#1d1d1f;">{weather['precipitation_probability']}%</td>
+                  <td style="font-size:17px; font-weight:600; color:#1d1d1f;">{weather['wind_speed_kmh']:.0f} km/h</td>
+                </tr>
+              </table>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;">
+                <tr>
+                  <td style="padding:8px 0; font-size:11px; color:#86868b; text-transform:uppercase; letter-spacing:0.5px; width:50%;">Sunrise</td>
+                  <td style="padding:8px 0; font-size:11px; color:#86868b; text-transform:uppercase; letter-spacing:0.5px; width:50%;">Sunset</td>
+                </tr>
+                <tr>
+                  <td style="font-size:17px; font-weight:600; color:#1d1d1f;">{sunrise}</td>
+                  <td style="font-size:17px; font-weight:600; color:#1d1d1f;">{sunset}</td>
+                </tr>
+              </table>
+              {quip_html}"""
+
+    return _build_widget("\u2601\ufe0f Weather", content)
+
+
+def _build_calendar_widget(events):
+    """Build calendar widget HTML from events data."""
+    if events is None:
+        content = '<p style="margin:0; font-size:15px; color:#86868b;">Calendar data unavailable.</p>'
+        return _build_widget("📅 Schedule", content)
+
+    if not events:
+        content = '<p style="margin:0; font-size:15px; color:#86868b;">Nothing scheduled \u2014 enjoy the open day!</p>'
+        return _build_widget("📅 Schedule", content)
+
+    items_html = []
+    for i, e in enumerate(events):
+        start, end = e["start"], e["end"]
+        if "T" in start:
+            time_str = f"{_format_time(start)} \u2013 {_format_time(end)}"
+        else:
+            time_str = "All Day"
+
+        location_html = ""
+        if e.get("location"):
+            location_html = f'<p style="margin:4px 0 0; font-size:13px; color:#86868b;">📍 {html.escape(e["location"])}</p>'
+
+        separator = ""
+        if i > 0:
+            separator = '<tr><td style="padding:10px 0;"><div style="border-top:1px solid #f2f2f7; height:0;"></div></td></tr>'
+
+        items_html.append(f"""
+              {separator}
+              <tr><td>
+                <p style="margin:0; font-size:13px; color:#86868b; font-weight:500;">{time_str}</p>
+                <p style="margin:4px 0 0; font-size:17px; color:#1d1d1f; font-weight:600;">{html.escape(e['summary'])}</p>
+                {location_html}
+              </td></tr>""")
+
+    content = f'<table width="100%" cellpadding="0" cellspacing="0" border="0">{"".join(items_html)}</table>'
+    return _build_widget("📅 Schedule", content)
+
+
+def _build_digest_widget(digest_text):
+    """Build daily digest widget from Claude-generated content."""
+    content = f'<p style="margin:0; font-size:15px; color:#1d1d1f; line-height:1.6;">{html.escape(digest_text)}</p>'
+    return _build_widget("\u2728 Daily Digest", content)
+
+
+def _build_email(date_str, greeting, widgets_html, signoff):
+    """Assemble the full email with Apple glass design."""
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0; padding:0; background-color:#f2f2f7; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f2f2f7;">
+    <tr><td align="center" style="padding:48px 24px;">
+      <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; width:100%;">
+
+        <!-- Header -->
+        <tr><td style="padding-bottom:32px; text-align:center;">
+          <p style="margin:0; font-size:17px; color:#1d1d1f; line-height:1.5;">{html.escape(greeting)}</p>
+          <p style="margin:8px 0 0; font-size:13px; color:#aeaeb2; font-weight:500; letter-spacing:0.3px;">{html.escape(date_str)} \u00b7 Calgary, AB</p>
+        </td></tr>
+
+        <!-- Widgets -->
+        {widgets_html}
+
+        <!-- Footer -->
+        <tr><td style="padding-top:24px; text-align:center;">
+          <p style="margin:0; font-size:15px; color:#6e6e73;">{html.escape(signoff)}</p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+
+def _generate_dynamic_content(events, weather):
+    """Use Claude to generate witty, dynamic content for the briefing."""
+    client = anthropic.Anthropic()
+    today = datetime.now(MST)
+    today_str = today.strftime("%A, %B %d, %Y")
+
+    context_parts = []
+    if weather:
+        context_parts.append(
+            f"Weather: {weather['weather_description']}, "
+            f"High {weather['high_c']}\u00b0C, Low {weather['low_c']}\u00b0C, "
+            f"Precip {weather['precipitation_probability']}%"
         )
+    if events:
+        event_summaries = [e["summary"] for e in events]
+        context_parts.append(
+            f"Calendar: {len(events)} events \u2014 {', '.join(event_summaries)}"
+        )
+    elif events is not None:
+        context_parts.append("Calendar: Free day, no events!")
+
+    context = "\n".join(context_parts) if context_parts else "No data available."
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=1024,
+        max_tokens=512,
         system=(
-            "You are a personal assistant composing a daily briefing email. "
-            "Write in a warm, professional tone. Format the email in HTML with "
-            "clean styling. Include a greeting, a weather summary section, "
-            "a calendar/schedule section, and a brief sign-off. "
-            "Use inline CSS for styling (background colors, padding, etc.) "
-            "since this will be viewed in an email client. "
-            "Keep it concise but informative."
+            "You write content for a daily briefing email. Your tone is warm, witty, "
+            "and comedic \u2014 like a funny, well-read friend who keeps things light. "
+            "Keep everything brief and punchy.\n\n"
+            "Return ONLY a JSON object with these exact keys:\n"
+            '- "greeting": A fun morning greeting (1-2 sentences). '
+            "Reference the day of week, weather, or something timely.\n"
+            '- "weather_quip": A witty one-liner about today\'s weather (1 short sentence).\n'
+            '- "digest": 2-3 sentences of entertaining commentary. Include a fun fact '
+            "about today's date, something happening in the world, or comedic life advice. "
+            "Keep it light and make the reader smile.\n"
+            '- "signoff": A brief, funny sign-off (1 sentence).\n\n'
+            "Return ONLY valid JSON. No markdown code fences or extra text."
         ),
         messages=[
             {
                 "role": "user",
-                "content": (
-                    f"Please compose my daily briefing email for {today} "
-                    f"in Calgary, AB.\n\n"
-                    f"WEATHER FORECAST:\n{weather_text}\n\n"
-                    f"TODAY'S CALENDAR:\n{events_text}"
-                ),
+                "content": f"Date: {today_str}\nLocation: Calgary, AB\n\n{context}",
             }
         ],
     )
 
-    return message.content[0].text
+    try:
+        text = message.content[0].text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        return json.loads(text)
+    except (json.JSONDecodeError, IndexError, KeyError):
+        return {
+            "greeting": f"Good morning! Happy {today.strftime('%A')}.",
+            "weather_quip": "",
+            "digest": "Stay curious, stay caffeinated.",
+            "signoff": "Have a great day!",
+        }
+
+
+def compose_briefing(events, weather):
+    """Compose the full briefing email with Apple glass-style widgets."""
+    today = datetime.now(MST).strftime("%A, %B %d, %Y")
+
+    print("Generating dynamic content with Claude...")
+    dynamic = _generate_dynamic_content(events, weather)
+
+    weather_widget = _build_weather_widget(weather, dynamic.get("weather_quip", ""))
+    calendar_widget = _build_calendar_widget(events)
+    digest_widget = _build_digest_widget(dynamic.get("digest", ""))
+
+    widgets_html = weather_widget + calendar_widget + digest_widget
+
+    return _build_email(
+        today,
+        dynamic.get("greeting", f"Good morning! Happy {datetime.now(MST).strftime('%A')}."),
+        widgets_html,
+        dynamic.get("signoff", "Have a great day!"),
+    )
 
 
 def send_email(subject, html_body):
