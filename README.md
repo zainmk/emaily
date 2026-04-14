@@ -28,6 +28,7 @@ GOOGLE_CLIENT_SECRET: registered application generated secret (must register a g
 GOOGLE_REFRESH_TOKEN: collected via running the 'get_refresh_token.py' file
 
 ANTHROPIC_API_KEY: Private API Key for anthropic-claude 'call'
+NASA_API_KEY: Private API key for the NASA api calls (ex. APOD)
 
 GMAIL_ADDRESS: Gmail Account Username
 GMAIL_APP_PASSWORD: 'App Password' of the referenced GMAIL_ADDRESS; will need to be created via Google account. 
