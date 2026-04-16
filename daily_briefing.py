@@ -1,7 +1,7 @@
 # FOR LOCAL TESTING VIA .ENV
 
-from dotenv import load_dotenv
-load_dotenv()
+# from dotenv import load_dotenv
+# load_dotenv()
 
 import os
 import sys
