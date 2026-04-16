@@ -2,7 +2,7 @@ name: Daily Briefing
 
 on:
   schedule:
-    - cron: '0 15 * * *' # 15:00 UTC = 8:00 AM MST
+    - cron: '0 12 * * *' # 12:00 UTC = 5:00 AM MST
   workflow_dispatch:
 
 jobs:
